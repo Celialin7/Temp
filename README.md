@@ -1,6 +1,8 @@
-def clean_cols(df, target_value):
-    df['col2'] = df.apply(lambda r: r['col2']
-                          .replace(r['col3'] if pd.notna(r['col3']) else '', '')
-                          .replace(r['col4'] if pd.notna(r['col4']) else '', '')
-                          if r['col1'] == target_value else r['col2'], axis=1)
-    return df
+df['a_clean'] = df['col_a'].astype(str).str.upper().str.replace(r'[^A-Z0-9]', '', regex=True)
+df['b_clean'] = df['col_b'].astype(str).str.upper().str.replace(r'[^A-Z0-9]', '', regex=True)
+
+
+df['newcol'] = [
+    'Y' if (a == b) or (a in b) or (b in a) or (fuzz.ratio(a, b) > 80) else 'N'
+    for a, b in zip(df['a_clean'], df['b_clean'])
+]
