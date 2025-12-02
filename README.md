@@ -1,9 +1,15 @@
-def clean_col2(df, target):
-    df.loc[
-        (df['col1'] == target) &
-        df['col2'].notna() &
-        df['col3'].notna() &
-        df.apply(lambda r: r['col3'] in r['col2'], axis=1),
-        'col2'
-    ] = df.apply(lambda r: r['col2'].replace(r['col3'], ''), axis=1)
+
+def clean_columns(df, target_value):
+    def remove_substrings(row):
+        # 只处理 col1 == target_value 的行
+        if row['col1'] != target_value:
+            return row['col2']
+        
+        out = row['col2']
+        for c in ['col3', 'col4']:
+            if pd.notna(row[c]) and isinstance(out, str) and row[c] in out:
+                out = out.replace(row[c], '')
+        return out
+    
+    df['col2'] = df.apply(remove_substrings, axis=1)
     return df
