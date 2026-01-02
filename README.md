@@ -89,3 +89,67 @@ if __name__ == "__main__":
             human_move_to(random.randint(100, width-100), random.randint(100, height-100))
         
         human_delay(4, 20)  # 下次动作前随机长等待
+
+
+
+
+
+第二段：
+import time
+import random
+import pyautogui
+import logging
+import numpy as np  # 新增：用于计算曲线点
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+pyautogui.PAUSE = 0
+
+def human_delay(min_sec=3, max_sec=15):
+    mean = (min_sec + max_sec) / 2
+    sigma = (max_sec - min_sec) / 4
+    delay = random.gauss(mean, sigma)
+    delay = max(min_sec, min(max_sec, delay))
+    logging.info(f"等待 {delay:.2f} 秒")
+    time.sleep(delay)
+
+def bezier_curve_move_to(target_x, target_y, deviation=100, points=30):
+    """使用二次 Bezier 曲线模拟人类弯曲路径移动"""
+    start_x, start_y = pyautogui.position()
+    
+    # 随机控制点（使路径弯曲）
+    ctrl_x = (start_x + target_x) / 2 + random.randint(-deviation, deviation)
+    ctrl_y = (start_y + target_y) / 2 + random.randint(-deviation, deviation)
+    
+    # 生成曲线点
+    t = np.linspace(0, 1, points)
+    path_x = (1-t)**2 * start_x + 2*(1-t)*t * ctrl_x + t**2 * target_x
+    path_y = (1-t)**2 * start_y + 2*(1-t)*t * ctrl_y + t**2 * target_y
+    
+    # 添加轻微噪声
+    path_x += np.random.randint(-5, 6, size=points)
+    path_y += np.random.randint(-5, 6, size=points)
+    
+    logging.info(f"Bezier 曲线移动到 ({target_x}, {target_y})")
+    for i in range(1, len(path_x)):
+        duration = random.uniform(0.02, 0.08)  # 每步小移动
+        pyautogui.moveTo(path_x[i], path_y[i], duration=duration)
+
+def human_click(x=None, y=None):
+    if x is not None and y is not None:
+        bezier_curve_move_to(x, y)
+    pyautogui.click()
+
+def human_type(text, error_rate=0.08):
+    # 同方案1
+    logging.info(f"输入文本: {text}")
+    for char in text:
+        if random.random() < error_rate:
+            wrong = random.choice('abcdefghijklmnopqrstuvwxyz')
+            pyautogui.typewrite(wrong)
+            time.sleep(random.uniform(0.2, 0.5))
+            pyautogui.press('backspace')
+            time.sleep(random.uniform(0.1, 0.4))
+        pyautogui.typewrite(char)
+        time.sleep(random.uniform(0.06, 0.3))
+
+# 示例使用类似方案1，替换 human_move_to 为 bezier_curve_move_to
