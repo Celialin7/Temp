@@ -42,14 +42,16 @@ def human_move_to(x, y, variance=15):
     pyautogui.moveTo(x, y, duration=duration, tween=tween)
 
 def human_click(x=None, y=None):
-    """人类-like 点击"""
+    """人类-like 点击（改为使用官方最稳定的 click()）"""
     if x is not None and y is not None:
         human_move_to(x, y)
     
-    click_delay = random.uniform(0.05, 0.18)
-    logging.info("执行点击")
+    # 【核心修改】：放弃手动 mouseDown/mouseUp，改为原子操作 click()
+    # 添加极短随机间隔模拟人类按下-释放时间（不影响稳定性）
+    click_duration = random.uniform(0.08, 0.22)
+    logging.info(f"执行点击（按下保持约 {click_duration:.2f} 秒）")
     pyautogui.mouseDown()
-    time.sleep(click_delay)
+    time.sleep(click_duration)
     pyautogui.mouseUp()
 
 def human_type(text, error_rate=0.06):
