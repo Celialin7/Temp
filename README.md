@@ -53,18 +53,30 @@ def human_click(x=None, y=None):
     pyautogui.mouseUp()
 
 def human_type(text, error_rate=0.06):
-    """人类-like 打字，带随机延迟和偶尔“打错纠正”"""
+    """人类-like 打字，使用 press() 避免 typewrite 的输入法卡死问题"""
     logging.info(f"输入文本: {text}")
     for char in text:
-        if random.random() < error_rate:  # 偶尔打错并纠正
+        # 偶尔模拟打错并纠正（更像人类）
+        if random.random() < error_rate:
             wrong = random.choice('abcdefghijklmnopqrstuvwxyz ')
-            pyautogui.typewrite(wrong)
+            pyautogui.press(wrong)
             time.sleep(random.uniform(0.15, 0.45))
             pyautogui.press('backspace')
             time.sleep(random.uniform(0.1, 0.35))
         
-        pyautogui.typewrite(char)
-        time.sleep(random.uniform(0.05, 0.28))  # 正常键间延迟
+        # 【核心修改】：用 press() 替代 typewrite(char)
+        if char == ' ':
+            pyautogui.press('space')
+        elif len(char) == 1:
+            # 处理大小写（人类打字会自然按 shift）
+            if char.isupper():
+                pyautogui.keyDown('shift')
+                pyautogui.press(char.lower())
+                pyautogui.keyUp('shift')
+            else:
+                pyautogui.press(char)
+        # 正常键间随机延迟（真正控制打字速度，像人类）
+        time.sleep(random.uniform(0.05, 0.28))
 
 # ==================== 主程序启动部分 ====================
 if __name__ == "__main__":
