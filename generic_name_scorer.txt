@@ -17,6 +17,11 @@ COMMON_STOPWORDS: List[str] = [
     "CORP",
 ]
 
+# Sequential 3-letter patterns: ABC, BCD, ..., XYZ
+SEQ3_PATTERN = r"(?:%s)" % "|".join(
+    "".join(chr(c + i) for i in range(3)) for c in range(ord("A"), ord("X") + 1)
+)
+
 COUNTRY_CONFIG: Dict[str, Dict[str, List[str]]] = {
     "VN": {
         "stop_words": ["TNHH", "CONG TY", "CP", "MTV", "JSC"],
@@ -108,17 +113,27 @@ class GenericNameScorer:
         if self.name_col not in self.df.columns:
             raise ValueError(f"Missing name_col: {self.name_col}")
 
-    # Runs full pipeline: clean names, apply hard rules (score=100), then TF-IDF soft rules (0-80); returns df sorted by risk_score descending.
+    # Runs full pipeline: clean names, compute hard-rule indicators and scores, apply TF-IDF (0-100), and return df sorted by final_score descending.
     def score(self) -> pd.DataFrame:
         self.df["clean_name"] = self._clean_name(self.df[self.name_col])
-        self.df["risk_score"] = 0.0
+        hard_flags = self._apply_hard_rules(self.df["clean_name"])
+        for col_name, flag in hard_flags.items():
+            self.df[col_name] = flag.astype(int)
 
-        hard_mask = self._apply_hard_rules(self.df["clean_name"])
-        self.df.loc[hard_mask, "risk_score"] = 100.0
+        # Each hard rule hit contributes 100 points.
+        hard_score = (
+            self.df["rule_a_numeric"]
+            + self.df["rule_b_too_short"]
+            + self.df["rule_c_pattern3"]
+        ) * 100.0
+        self.df["hard_score"] = hard_score
 
-        self._apply_soft_rules()
+        self.df["tfidf_score"] = 0.0
+        self._apply_soft_rules(ignore_mask=hard_flags["rule_b_too_short"])
 
-        return self.df.sort_values("risk_score", ascending=False)
+        self.df["final_score"] = self.df["hard_score"] + self.df["tfidf_score"]
+
+        return self.df.sort_values("final_score", ascending=False)
 
     # Uppercases names, strips non-alphanumeric, removes country-specific and common legal suffixes, normalizes spaces.
     def _clean_name(self, series: pd.Series) -> pd.Series:
@@ -141,26 +156,26 @@ class GenericNameScorer:
             parts.append(escaped)
         return r"\b(?:%s)\b" % "|".join(parts)
 
-    # Returns a boolean mask: True where the name matches any hard rule (numeric-only, short alpha, repeated char, or location-plus-one-word shell pattern).
-    def _apply_hard_rules(self, clean_series: pd.Series) -> pd.Series:
+    # Returns a dict of hard-rule flags (1/0) for each row.
+    def _apply_hard_rules(self, clean_series: pd.Series) -> Dict[str, pd.Series]:
         no_space = clean_series.str.replace(r"\s+", "", regex=True)
 
-        # Rule A (Numeric): name consists solely of digits, e.g. "123888"; typical shelf or number-only entity.
-        rule_numeric = no_space.str.match(r"^\d+$")
-        # Rule B (Alphabet soup): name is 1 to 3 letters only, e.g. "ABC", "XY".
-        rule_short_alpha = no_space.str.len().between(1, 3) & no_space.str.match(r"^[A-Z]+$")
-        # Rule B (Repeated): name is a single letter repeated, e.g. "AAAA".
-        rule_repeated = no_space.str.match(r"^([A-Z])\1+$")
-        # Rule C (Location shell): name is a location keyword followed by exactly one word, e.g. "Vietnam Trade", "Bangkok Best".
-        location_pattern = self._build_location_pattern(COUNTRY_CONFIG[self.country_code]["locations"])
-        if location_pattern:
-            rule_location = clean_series.str.match(location_pattern)
-        else:
-            rule_location = pd.Series(False, index=clean_series.index)
+        # Rule A (Numeric): name consists solely of digits, e.g. "123888".
+        rule_a_numeric = no_space.str.match(r"^\d+$")
+        # Rule B (Too short): name length is 1-3 after removing stopwords, e.g. "A1B" or "AB".
+        rule_b_too_short = no_space.str.len().between(1, 3)
+        # Rule C (Letter pattern 3): repeat-3 or sequential-3 within a word; runs on clean_series to respect spaces.
+        rule_c_pattern3 = clean_series.str.contains(r"([A-Z])\1\1", regex=True) | clean_series.str.contains(
+            SEQ3_PATTERN, regex=True
+        )
 
-        return rule_numeric | rule_short_alpha | rule_repeated | rule_location
+        return {
+            "rule_a_numeric": rule_a_numeric,
+            "rule_b_too_short": rule_b_too_short,
+            "rule_c_pattern3": rule_c_pattern3,
+        }
 
-    # Builds regex for Hard Rule C: string must start with one of the location keywords then a single word, e.g. ^(VIETNAM|HANOI|...)\s+\w+$
+    # Builds regex for legacy Hard Rule C (location + one word); kept for reference if needed later.
     def _build_location_pattern(self, locations: List[str]) -> str:
         if not locations:
             return ""
@@ -170,9 +185,9 @@ class GenericNameScorer:
             parts.append(escaped)
         return r"^(?:%s)\s+\w+$" % "|".join(parts)
 
-    # Assigns risk_score 0-80 via TF-IDF: lower average IDF (more common words) gives higher score (more generic). Runs only on rows not already scored by hard rules.
-    def _apply_soft_rules(self) -> None:
-        mask = self.df["risk_score"] == 0
+    # Assigns tfidf_score 0-100 via TF-IDF: lower average IDF (more common words) gives higher score (more generic); skips rows flagged as too short.
+    def _apply_soft_rules(self, ignore_mask: pd.Series) -> None:
+        mask = ~ignore_mask
         subset = self.df.loc[mask, "clean_name"]
         if subset.empty:
             return
@@ -205,6 +220,6 @@ class GenericNameScorer:
         if max_idf == min_idf:
             scores = np.zeros_like(avg_idf)
         else:
-            scores = 80.0 * (1.0 - (avg_idf - min_idf) / (max_idf - min_idf))
+            scores = 100.0 * (1.0 - (avg_idf - min_idf) / (max_idf - min_idf))
 
-        self.df.loc[mask, "risk_score"] = scores
+        self.df.loc[mask, "tfidf_score"] = scores
