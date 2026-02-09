@@ -1,0 +1,188 @@
+import re
+from typing import Dict, List
+
+import numpy as np
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+
+COUNTRY_CONFIG: Dict[str, Dict[str, List[str]]] = {
+    "VN": {
+        "stop_words": ["TNHH", "CONG TY", "CP", "MTV", "CO LTD", "LIMITED", "JSC"],
+        "locations": [
+            "VIETNAM",
+            "HANOI",
+            "HA NOI",
+            "HO CHI MINH",
+            "HO CHI MINH CITY",
+            "HCM",
+            "HOCHIMINH",
+            "SAIGON",
+            "DANANG",
+            "DA NANG",
+            "HAI PHONG",
+            "CAN THO",
+            "HUE",
+            "BINH DUONG",
+            "DONG NAI",
+        ],
+    },
+    "TH": {
+        "stop_words": ["CO LTD", "LIMITED", "LTD", "PCL", "BORISAT", "PARTNERSHIP"],
+        "locations": [
+            "THAILAND",
+            "BANGKOK",
+            "BKK",
+            "THAI",
+            "PHUKET",
+            "CHIANG MAI",
+            "CHIANGMAI",
+            "PATTAYA",
+            "CHONBURI",
+            "KRABI",
+            "HAT YAI",
+            "SONGKHLA",
+            "NONTHABURI",
+            "AYUTTHAYA",
+            "NAKHON RATCHASIMA",
+            "KORAT",
+            "SAMUT PRAKAN",
+        ],
+    },
+    "MY": {
+        "stop_words": ["SDN BHD", "BHD", "ENTERPRISE", "TRADING", "PLT", "CO LTD"],
+        "locations": [
+            "MALAYSIA",
+            "KUALA LUMPUR",
+            "KUALALUMPUR",
+            "KL",
+            "SELANGOR",
+            "JOHOR",
+            "JOHOR BAHRU",
+            "JB",
+            "PENANG",
+            "PULAU PINANG",
+            "MELAKA",
+            "MALACCA",
+            "PERAK",
+            "KEDAH",
+            "NEGERI SEMBILAN",
+            "PAHANG",
+            "TERENGGANU",
+            "SABAH",
+            "SARAWAK",
+            "KOTA KINABALU",
+            "KUCHING",
+        ],
+    },
+}
+
+
+class GenericNameScorer:
+    """
+    Hybrid generic-name risk scoring for CDD nominee shareholding review.
+
+    Usage:
+        scorer = GenericNameScorer(df, "VN", name_col="customer_name")
+        scored_df = scorer.score()
+    """
+
+    def __init__(self, df: pd.DataFrame, country_code: str, name_col: str = "customer_name"):
+        self.df = df.copy()
+        self.country_code = country_code.upper()
+        self.name_col = name_col
+        if self.country_code not in COUNTRY_CONFIG:
+            raise ValueError(f"Unsupported country_code: {self.country_code}")
+        if self.name_col not in self.df.columns:
+            raise ValueError(f"Missing name_col: {self.name_col}")
+
+    def score(self) -> pd.DataFrame:
+        self.df["clean_name"] = self._clean_name(self.df[self.name_col])
+        self.df["risk_score"] = 0.0
+
+        hard_mask = self._apply_hard_rules(self.df["clean_name"])
+        self.df.loc[hard_mask, "risk_score"] = 100.0
+
+        self._apply_soft_rules()
+
+        return self.df.sort_values("risk_score", ascending=False)
+
+    def _clean_name(self, series: pd.Series) -> pd.Series:
+        series = series.fillna("").astype(str).str.upper()
+        series = series.str.replace(r"[^A-Z0-9]+", " ", regex=True)
+        suffix_pattern = self._build_suffix_pattern(COUNTRY_CONFIG[self.country_code]["stop_words"])
+        if suffix_pattern:
+            series = series.str.replace(suffix_pattern, " ", regex=True)
+        series = series.str.replace(r"\s+", " ", regex=True).str.strip()
+        return series
+
+    def _build_suffix_pattern(self, stop_words: List[str]) -> str:
+        if not stop_words:
+            return ""
+        parts = []
+        for word in stop_words:
+            escaped = re.escape(word).replace(r"\ ", r"\s+")
+            parts.append(escaped)
+        return r"\b(?:%s)\b" % "|".join(parts)
+
+    def _apply_hard_rules(self, clean_series: pd.Series) -> pd.Series:
+        no_space = clean_series.str.replace(r"\s+", "", regex=True)
+
+        rule_numeric = no_space.str.match(r"^\d+$")
+        rule_short_alpha = no_space.str.len().between(1, 3) & no_space.str.match(r"^[A-Z]+$")
+        rule_repeated = no_space.str.match(r"^([A-Z])\1+$")
+
+        location_pattern = self._build_location_pattern(COUNTRY_CONFIG[self.country_code]["locations"])
+        if location_pattern:
+            rule_location = clean_series.str.match(location_pattern)
+        else:
+            rule_location = pd.Series(False, index=clean_series.index)
+
+        return rule_numeric | rule_short_alpha | rule_repeated | rule_location
+
+    def _build_location_pattern(self, locations: List[str]) -> str:
+        if not locations:
+            return ""
+        parts = []
+        for loc in locations:
+            escaped = re.escape(loc).replace(r"\ ", r"\s+")
+            parts.append(escaped)
+        return r"^(?:%s)\s+\w+$" % "|".join(parts)
+
+    def _apply_soft_rules(self) -> None:
+        mask = self.df["risk_score"] == 0
+        subset = self.df.loc[mask, "clean_name"]
+        if subset.empty:
+            return
+
+        vectorizer = TfidfVectorizer(
+            min_df=2,
+            max_df=0.95,
+            lowercase=False,
+            token_pattern=r"(?u)\b\w+\b",
+        )
+        tfidf = vectorizer.fit_transform(subset)
+        if tfidf.shape[1] == 0:
+            return
+
+        binary = tfidf.copy()
+        binary.data = np.ones_like(binary.data)
+
+        idf = vectorizer.idf_
+        idf_sum = np.array(binary.multiply(idf).sum(axis=1)).ravel()
+        term_counts = np.array(binary.sum(axis=1)).ravel()
+        avg_idf = np.divide(
+            idf_sum,
+            term_counts,
+            out=np.zeros_like(idf_sum),
+            where=term_counts != 0,
+        )
+
+        min_idf = float(avg_idf.min())
+        max_idf = float(avg_idf.max())
+        if max_idf == min_idf:
+            scores = np.zeros_like(avg_idf)
+        else:
+            scores = 80.0 * (1.0 - (avg_idf - min_idf) / (max_idf - min_idf))
+
+        self.df.loc[mask, "risk_score"] = scores
