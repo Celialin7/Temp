@@ -155,18 +155,21 @@ class GenericNameScorer:
     def _apply_hard_rules(self, clean_series: pd.Series) -> Dict[str, pd.Series]:
         no_space = clean_series.str.replace(r"\s+", "", regex=True)
 
-        # Sequential 3-letter patterns ABC..XYZ and reverse CBA..ZYX (defined here so method works even if module top was not run).
-        seq3_forward = ["".join(chr(c + i) for i in range(3)) for c in range(ord("A"), ord("X") + 1)]
-        seq3_reverse = ["".join(chr(c - i) for i in range(3)) for c in range(ord("C"), ord("Z") + 1)]
-        seq3 = r"\b(?:%s)\b" % "|".join(seq3_forward + seq3_reverse)
+        # Sequential 3-letter patterns ABC, BCD, ..., XYZ (including reverse like CBA).
+        seq3 = r"(?:%s)" % "|".join(
+            "".join(chr(c + i) for i in range(3)) for c in range(ord("A"), ord("X") + 1)
+        )
+        seq3_rev = r"(?:%s)" % "|".join(
+            "".join(chr(c - i) for i in range(3)) for c in range(ord("C"), ord("Z") + 1)
+        )
 
         # Rule A (Numeric): name consists solely of digits, e.g. "123888".
         rule_a_numeric = no_space.str.match(r"^\d+$")
         # Rule B (Too short): name length is 1-3 after removing stopwords, e.g. "A1B" or "AB".
         rule_b_too_short = no_space.str.len().between(1, 3)
-        # Rule C (Letter pattern 3): repeat-3 or sequential-3 within a word; runs on clean_series to respect spaces.
+        # Rule C (Letter pattern 3): repeat-3 or sequential-3 as a whole word (including reverse sequences).
         rule_c_pattern3 = clean_series.str.contains(r"\b([A-Z])\1\1\b", regex=True) | clean_series.str.contains(
-            seq3, regex=True
+            rf"\b(?:{seq3}|{seq3_rev})\b", regex=True
         )
 
         return {
