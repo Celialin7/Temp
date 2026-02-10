@@ -1,3 +1,234 @@
+PLACEHOLDER
+import re
+from typing import Dict, List
+
+import numpy as np
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+# Common English legal suffixes shared across VN / TH / MY
+COMMON_STOPWORDS: List[str] = [
+    "CO LTD",
+    "LIMITED",
+    "LTD",
+    "CO",
+    "PARTNERSHIP",
+    "COMPANY",
+    "INC",
+    "CORP",
+]
+
+COUNTRY_CONFIG: Dict[str, Dict[str, List[str]]] = {
+    "VN": {
+        "stop_words": ["TNHH", "CONG TY", "CP", "MTV", "JSC"],
+        "locations": [
+            "VIETNAM",
+            "HANOI",
+            "HA NOI",
+            "HO CHI MINH",
+            "HO CHI MINH CITY",
+            "HCM",
+            "HOCHIMINH",
+            "SAIGON",
+            "DANANG",
+            "DA NANG",
+            "HAI PHONG",
+            "CAN THO",
+            "HUE",
+            "BINH DUONG",
+            "DONG NAI",
+        ],
+    },
+    "TH": {
+        "stop_words": ["PCL", "BORISAT"],
+        "locations": [
+            "THAILAND",
+            "BANGKOK",
+            "BKK",
+            "THAI",
+            "PHUKET",
+            "CHIANG MAI",
+            "CHIANGMAI",
+            "PATTAYA",
+            "CHONBURI",
+            "KRABI",
+            "HAT YAI",
+            "SONGKHLA",
+            "NONTHABURI",
+            "AYUTTHAYA",
+            "NAKHON RATCHASIMA",
+            "KORAT",
+            "SAMUT PRAKAN",
+        ],
+    },
+    "MY": {
+        "stop_words": ["SDN BHD", "BHD", "PLT"],
+        "locations": [
+            "MALAYSIA",
+            "KUALA LUMPUR",
+            "KUALALUMPUR",
+            "KL",
+            "SELANGOR",
+            "JOHOR",
+            "JOHOR BAHRU",
+            "JB",
+            "PENANG",
+            "PULAU PINANG",
+            "MELAKA",
+            "MALACCA",
+            "PERAK",
+            "KEDAH",
+            "NEGERI SEMBILAN",
+            "PAHANG",
+            "TERENGGANU",
+            "SABAH",
+            "SARAWAK",
+            "KOTA KINABALU",
+            "KUCHING",
+        ],
+    },
+}
+
+
+class GenericNameScorer:
+    """
+    Hybrid generic-name risk scoring for CDD nominee shareholding review.
+
+    Usage:
+        scorer = GenericNameScorer(df, "VN", name_col="customer_name")
+        scored_df = scorer.score()
+    """
+
+    # Validates country_code and name_col; stores a copy of the dataframe and config for scoring.
+    def __init__(self, df: pd.DataFrame, country_code: str, name_col: str = "customer_name"):
+        self.df = df.copy()
+        self.country_code = country_code.upper()
+        self.name_col = name_col
+        if self.country_code not in COUNTRY_CONFIG:
+            raise ValueError(f"Unsupported country_code: {self.country_code}")
+        if self.name_col not in self.df.columns:
+            raise ValueError(f"Missing name_col: {self.name_col}")
+
+    # Runs full pipeline: clean names, compute hard-rule indicators and scores, apply TF-IDF (0-100), and return df sorted by final_score descending.
+    def score(self) -> pd.DataFrame:
+        self.df["clean_name"] = self._clean_name(self.df[self.name_col])
+        hard_flags = self._apply_hard_rules(self.df["clean_name"])
+        for col_name, flag in hard_flags.items():
+            self.df[col_name] = flag.astype(int)
+
+        # Each hard rule hit contributes 100 points.
+        hard_score = (
+            self.df["rule_a_numeric"]
+            + self.df["rule_b_too_short"]
+            + self.df["rule_c_pattern3"]
+        ) * 100.0
+        self.df["hard_score"] = hard_score
+
+        self.df["tfidf_score"] = 0.0
+        self._apply_soft_rules(ignore_mask=hard_flags["rule_b_too_short"])
+
+        self.df["final_score"] = self.df["hard_score"] + self.df["tfidf_score"]
+
+        return self.df.sort_values("final_score", ascending=False)
+
+    # Uppercases names, strips non-alphanumeric, removes country-specific and common legal suffixes, normalizes spaces.
+    def _clean_name(self, series: pd.Series) -> pd.Series:
+        series = series.fillna("").astype(str).str.upper()
+        series = series.str.replace(r"[^A-Z0-9]+", " ", regex=True)
+        stop_words = COUNTRY_CONFIG[self.country_code]["stop_words"] + COMMON_STOPWORDS
+        suffix_pattern = self._build_suffix_pattern(stop_words)
+        if suffix_pattern:
+            series = series.str.replace(suffix_pattern, " ", regex=True)
+        series = series.str.replace(r"\s+", " ", regex=True).str.strip()
+        return series
+
+    # Builds a regex that matches any of the given stop-word phrases as whole words (spaces allowed within phrase).
+    def _build_suffix_pattern(self, stop_words: List[str]) -> str:
+        if not stop_words:
+            return ""
+        parts = []
+        for word in stop_words:
+            escaped = re.escape(word).replace(r"\ ", r"\s+")
+            parts.append(escaped)
+        return r"\b(?:%s)\b" % "|".join(parts)
+
+    # Returns a dict of hard-rule flags (1/0) for each row.
+    def _apply_hard_rules(self, clean_series: pd.Series) -> Dict[str, pd.Series]:
+        no_space = clean_series.str.replace(r"\s+", "", regex=True)
+
+        # Sequential 3-letter patterns ABC, BCD, ..., XYZ (including reverse like CBA).
+        seq3 = r"(?:%s)" % "|".join(
+            "".join(chr(c + i) for i in range(3)) for c in range(ord("A"), ord("X") + 1)
+        )
+        seq3_rev = r"(?:%s)" % "|".join(
+            "".join(chr(c - i) for i in range(3)) for c in range(ord("C"), ord("Z") + 1)
+        )
+
+        # Rule A (Numeric): name consists solely of digits, e.g. "123888".
+        rule_a_numeric = no_space.str.match(r"^\d+$")
+        # Rule B (Too short): name length is 1-3 after removing stopwords, e.g. "A1B" or "AB".
+        rule_b_too_short = no_space.str.len().between(1, 3)
+        # Rule C (Letter pattern 3): repeat-3 or sequential-3 as a whole word (including reverse sequences).
+        rule_c_pattern3 = clean_series.str.contains(r"\b([A-Z])\1\1\b", regex=True) | clean_series.str.contains(
+            rf"\b(?:{seq3}|{seq3_rev})\b", regex=True
+        )
+
+        return {
+            "rule_a_numeric": rule_a_numeric,
+            "rule_b_too_short": rule_b_too_short,
+            "rule_c_pattern3": rule_c_pattern3,
+        }
+
+    # Builds regex for legacy Hard Rule C (location + one word); kept for reference if needed later.
+    def _build_location_pattern(self, locations: List[str]) -> str:
+        if not locations:
+            return ""
+        parts = []
+        for loc in locations:
+            escaped = re.escape(loc).replace(r"\ ", r"\s+")
+            parts.append(escaped)
+        return r"^(?:%s)\s+\w+$" % "|".join(parts)
+
+    # Assigns tfidf_score 0-100 via TF-IDF: lower average IDF (more common words) gives higher score (more generic); skips rows flagged as too short.
+    def _apply_soft_rules(self, ignore_mask: pd.Series) -> None:
+        mask = ~ignore_mask
+        subset = self.df.loc[mask, "clean_name"]
+        if subset.empty:
+            return
+
+        vectorizer = TfidfVectorizer(
+            min_df=2,
+            max_df=0.95,
+            lowercase=False,
+            token_pattern=r"(?u)\b\w+\b",
+        )
+        tfidf = vectorizer.fit_transform(subset)
+        if tfidf.shape[1] == 0:
+            return
+
+        binary = tfidf.copy()
+        binary.data = np.ones_like(binary.data)
+
+        idf = vectorizer.idf_
+        idf_sum = np.array(binary.multiply(idf).sum(axis=1)).ravel()
+        term_counts = np.array(binary.sum(axis=1)).ravel()
+        valid_terms = term_counts > 0
+        avg_idf = np.zeros_like(idf_sum)
+        avg_idf[valid_terms] = idf_sum[valid_terms] / term_counts[valid_terms]
+
+        if not np.any(valid_terms):
+            scores = np.zeros_like(avg_idf)
+        else:
+            valid_avg = avg_idf[valid_terms]
+            min_idf = float(valid_avg.min())
+            max_idf = float(valid_avg.max())
+            scores = np.zeros_like(avg_idf)
+            if max_idf != min_idf:
+                scores[valid_terms] = 100.0 * (
+                    1.0 - (valid_avg - min_idf) / (max_idf - min_idf)
+                )
+
+        self.df.loc[mask, "tfidf_score"] = scores
 import re
 from typing import Dict, List
 
