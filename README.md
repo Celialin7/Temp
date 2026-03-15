@@ -1,62 +1,36 @@
-Guidance On Reason Codes
-For SCT R-transactions
+You are an AI Assistant representing the Head of Global Payment Systems.
+You have access to two knowledge sources:
+1. Reason Code Guidance Document – contains definitions, root causes, explanations, and recommended actions for all SEPA return transaction (R-transaction) reason codes.
+2. Q4 2025 Company Transaction Summary – contains aggregated return-transaction counts and percentages by scheme, reason code, and industry benchmarks.
 
-EPC135-18 / Version 6.0 / Date of Publication: 28 November 2024
-Public
+Your objectives:
+A. Knowledge Accuracy
+- Always rely strictly on the retrieved documents.
+- When explaining a reason code, root cause, scheme rule, or recommended mitigation, only use information that appears in the retrieved guidance text.
+- When analyzing performance, reference the retrieved summary data.
 
-European Payments Council AISBL
-Cours Saint-Michel, 30 - B - 1040 Brussels
-T +32 2 733 35 33
-Entreprise N°0873.268.927
-secretariat@epc-cep.eu
+B. Insight Generation
+Whenever the user asks for analysis, provide:
+1. High-level insights
+2. Return-transaction patterns (top reason codes, dominant schemes, trend interpretation)
+3. Comparisons versus industry (if benchmark data is retrieved)
+4. Operational root causes based on the guidance
+5. Recommended actions tied directly to the documented mitigations
+6. Business impact (efficiency, customer experience, cost)
 
-1. SCT R-transaction definition
-The content of this document applies to the SEPA Credit Transfer (SCT) rulebook.
+C. Style & Voice
+Respond as an experienced executive in global payments:
+- Clear structure
+- Data-driven language
+- Concise but thorough
+- Avoid speculation; base conclusions on retrieved content
+- When something is missing, explicitly state: “The retrieved documents do not contain information about X.”
 
-Some SCT transactions require exception handling, because one of the parties involved does not or cannot process the transaction in the normal way. This exception handling involves the sending of messages called R-transactions because their names all start with an R: Rejects, Recalls, Request for Recall by the Originator (RFRO) and Returns. The definitions of the various R-transactions are outlined in the Exception Processing Flow section of the SCT rulebook. The rulebook also defines in a separate section an SCT Inquiry process for a Claim of Non-Receipt, and for a Claim for Value Date Correction.
+D. R-Transaction Logic
+When interpreting data:
+- Identify the most frequent reason codes
+- Connect each reason code with its definition and root cause
+- Recommend actions that align with the documented mitigation steps
+- Explain how improvements reduce future R-transaction rates
 
-The type of R-transaction used depends on the point in time in the processing chain at which the R-transaction is initiated or sent as well as on the party initiating or sending the R-transaction. The process of exception handling starts at the point in the process where the problem is detected.
-
-It is important to note that a SCT scheme participant must channel Rejects, Recalls, RFROs, Returns and SCT Inquiries through the same Clearing and Settlement Mechanism (CSM) used for the clearing and settlement of the initial SCT transaction, unless otherwise agreed between the SCT scheme participants.
-
-The R-transactions and the SCT Inquiries foreseen within the SCT scheme must be initiated within the timeline described below. It is pointed out that the Beneficiary PSP is in breach with the SCT rulebook if it does not send its answer:
-• to a Recall or an RFRO within 15 Banking Business Days following the receipt of the Recall or the RFRO from the Originator PSP;
-• to an SCT Inquiry within 10 Banking Business Days following the receipt of the SCT inquiry from the Originator PSP.
-
-1 For the definition of the term CSM in this guidance document, we refer to Chapter 7 of the rulebook.
-
-Banking Business Day (BBD): It equals a T2 day and applies to the inter-PSP execution of a SEPA Credit Transfer, and of any related R-transactions and SCT inquiries.
-
-2. Issues reported in the use of SCT R-transaction reason codes
-Some SCT scheme participants, when acting as a Beneficiary PSP, are not applying the correct R-transaction reason codes. Therefore, all scheme participants are reminded to use the correct SCT R-transaction reason codes described in the SCT rulebook.
-
-Section 3 of this document provides guidance to the SCT scheme participants about the reason codes to be used to report specific SCT transaction issues, SCT inquiries and related responses.
-
-3. Guidance in using SCT R-transaction and SCT Inquiry reason codes
-SCT scheme participants should avoid the use of general codes when a more precise reason can be given which is not legally forbidden in the country of the Beneficiary PSP. However, there are some restrictions in the use of R-transaction reason codes due to national legislation (e.g., data protection laws).
-
-| Code | ISO definition | Reason in the Rulebook or IGs | Type of R-trans. | Exhaustive list of use-cases | Possible root cause | Suggested action |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| AC01 | Incorrect Account Number | Account identifier invalid or incorrect (i.e. invalid IBAN or account number does not exist). | Reject, Return. | Reject: <br>• Invalid format of the IBAN; <br>• IBAN not existing at the Beneficiary PSP level. <br>Return: IBAN not existing at Beneficiary PSP level. | • Beneficiary gave invalid IBAN; <br>• Originator used wrong IBAN data from its customers’ database; <br>• Originator had technical problem during the processing of the SCT instruction issuance. | Originator to contact the Beneficiary to get the correct IBAN of the Beneficiary. |
-| AC03 | Invalid Creditor Account Number | Wrong unique identifier of the Beneficiary account. | RFRO. | Originator has made an SCT transaction which was addressed to a wrong IBAN. | Originator itself selected or entered a wrong IBAN of the Beneficiary when issuing the SCT instruction. | Originator: <br>• Adapt this internal SCT instruction issuance processes to avoid the selection of a wrong IBAN in the future; <br>• Pay more attention in selecting/ entering the IBAN when issuing a SCT instruction. |
-| AC04 | Closed Account Number | Account closed. | Return, Negative answer to a Recall or to a RFRO. | The account of the Beneficiary is closed at the Beneficiary PSP. <br>Note: This code cannot be used in certain SEPA countries for reasons of data protection. MS03 could be used as an alternative. | Beneficiary closed his account since the last time the Originator made a SCT instruction to this Beneficiary. | Originator to contact the Beneficiary for the new account. |
-| AC06 | Blocked Account | Account blocked. | Return. | Account blocked for any financial transaction. | • Beneficiary PSP has blocked the account due to a Court Order; <br>• Beneficiary PSP has blocked the account (e.g., suspicion of misuse, request from the Beneficiary). | Originator to contact the Beneficiary for alternative account/ solution to pay. |
-| ACNR | Accepted Claim Non-Receipt | Inter-PSP positive response to Claim Non-Receipt. | Positive answer to SCT Inquiry “Claim Non-Receipt”. | The Beneficiary PSP confirms to have credited the initial SCT transaction on the IBAN of the Beneficiary. It provides the Originator PSP with the date on which this SCT transaction has been credited. | No root cause to be defined. | Originator PSP to report back to the Originator that its SCT instruction was processed according to his/her instructions. |
-| ACVA | Accepted Value Date Adjustment | Inter-PSP positive response to Claim for Value Date Correction. | Positive answer to SCT Inquiry “Claim for Value Date Correction”. | The Beneficiary PSP: <br>• Accepts to correct the currently applied value date of the SCT transaction; and <br>• Requests an interest compensation from the Originator PSP before it executes this correction. | The cause for the claimed incorrect value date lies not with the Beneficiary PSP. | Originator PSP to pay first the interest compensation to the Beneficiary PSP. |
-| AG01 | Transaction Forbidden | Credit transfer forbidden on this account (e.g., savings account). | Return. | A SCT transaction cannot be booked on this type of account. | Beneficiary gave information of an account on which SCT transactions cannot be booked. | Originator to contact the Beneficiary to agree on another payment instrument. |
-| AG02 | Invalid Bank Operation Code | Operation code/ transaction code incorrect, invalid file format. | Reject, Return. | The identification code of the scheme (i.e. service level or local instrument) specified in the message is incorrect. <br>For specific XML file setting issues (i.e. invalid file format), please use FF01 instead. | Originator: technical error or error due to the processing of the SCT transaction or the file containing SCT instructions. | Originator to correct the wrong information. |
-| AM04 | Insufficient Funds | Insufficient funds on the account. | Negative answer to a Recall or to a RFRO. | There are not enough funds on the Beneficiary’s account to debit the full amount of the Recall or of the RFRO. | Insufficient funds on the Beneficiary’s account. | Originator (and Originator PSP if it concerns a Recall due to an error made by the Originator PSP itself) to contact the Beneficiary directly to obtain back the funds outside the Recall - or the RFRO procedures of the SCT scheme. |
-| AM05 | Duplication | Duplicate payment. | Reject, Return. | CSM or Beneficiary PSP considers that an identical SCT transaction had been sent or processed very recently. | Originator/ Originator PSP: technical or human error. | Originator/ Originator PSP to check if the transaction is really duplicated. |
-| AM09 | Wrong Amount | Wrong amount. | RFRO. | Originator has made an SCT instruction for an amount higher than intended. | Originator: technical or human error. | Originator to adapt this internal SCT instruction issuance processes to avoid transferring wrong amounts in the future. |
-| ARDT | The Transaction Has Already Been Returned | Already returned transaction. | Negative answer to a Recall or to a RFRO; Negative answer to SCT Inquiry “Claim Non-Receipt”. | • Negative answer to a Recall or to a RFRO: the Beneficiary has already transferred back the funds to the Originator (via SCT, SCT Inst or another payment means). <br>• Negative answer to SCT Inquiry “Claim Non-Receipt”: the Beneficiary PSP had not been able to process the initial SCT transaction. | • Not applicable. <br>• See the provided Return reason code for the SCT transaction. | • No action. <br>• See the suggested actions for the SCT Return reason code. |
-| ARJT | Already Rejected Transaction | Already rejected transaction. | Negative answer to SCT Inquiry “Claim Non-Receipt”. | The Beneficiary PSP had not been able to process the initial SCT transaction. | See the provided Reject reason code for the SCT transaction. | See the suggested actions for the SCT Reject reason code. |
-| BE04 | Missing Creditor Address | Account address invalid. | Return. | Address of the Beneficiary is not provided in the SCT transaction. | Missing or invalid address in case it is necessary for further processing. | Originator PSP to ask the Originator to provide the address of the Beneficiary. |
-| CERI | Check ERI | The credit transfer is not tagged as an Extended Remittance Information (ERI) transaction but contains ERI. | Reject. | The SCT instruction is not tagged as an Extended Remittance Information (ERI) instruction but contains ERI. | Error is made at the level of the Originator or the Originator PSP system when creating the payment message. | Originator PSP to check its processes and possibly revert to the Originator. |
-| CNOR | Creditor Bank Is Not Registered | Beneficiary PSP is not registered under this BIC in the CSM. | Reject, Return. | Beneficiary PSP is not/ no longer registered as a SCT scheme participant under this BIC at the CSM. | Beneficiary PSP not/ no longer declared as (indirect) participant to this CSM. | Originator to ask the Beneficiary how that Beneficiary can receive SCT transactions via another PSP. |
-| CUST | Requested By Customer | a. By request of the Originator without any reason specified. <br>b. Refusal by the Beneficiary. | a. RFRO. <br>b. Negative answer to a Recall or to a RFRO. | a. Originator wishes to recover the funds of an earlier settled SCT transaction. <br>b. Beneficiary does not want to honour the Recall or the RFRO. | a. The Originator does not give a specific reason to recover the funds. <br>b. Beneficiary claims to be entitled to the received funds. | a. No action. <br>b. Originator (and Originator PSP if it concerns a Recall due to an error made by the Originator PSP itself) to contact the Beneficiary directly to obtain back the funds outside the Recall or the RFRO procedures of the SCT scheme. |
-| CVAA | Correct Value Date Already Applied | Inter-PSP negative response to Claim for Value Date Correction. | Negative answer to SCT Inquiry “Claim for Value Date Correction”. | The Beneficiary PSP rejects the claim to correct the currently applied value date of the SCT transaction. | The Beneficiary PSP claims to have applied the correct value date as outlined in the SCT transaction. | Originator PSP to explain to the Originator that the SCT instruction has been executed according to the instructions of the Originator. |
-| DNOR | Debtor Bank Is Not Registered | Originator PSP is not registered under this BIC in the CSM. | Reject. | Originator PSP is not/no longer registered as a SCT scheme participant under this BIC at the CSM. | The Originator PSP sends SCT transactions by mistake to its former CSM. | • Originator PSP to rout its SCT transaction to its current CSM; <br>• Contact Originator to agree on another means of payment with the Beneficiary. |
-| DUPL | Duplicate Payment | Duplicate Sending. | Recall. | Originator or Originator PSP detects itself a duplicate SCT transaction and tries to recover the funds of this duplication. | Originator/ Originator PSP: technical or human error. | Originator and/or Originator PSP: no action apart of setting up measures preventing the duplicate initiation and/or exchange of SCT transactions from happening in the future. |
-| ED05 | Settlement Failed | Settlement of the SEPA Credit Transfer failed. | Reject. | The Originator PSP or the CSM must report a settlement failure. | The inter-PSP SCT funding facilities of the Originator PSP are insufficient to settle this transaction. | Action depends on the SLA between the Originator PSP and the CSM. |
-| ERIN | ERI Option Not Supported | The Extended Remittance Information (ERI) option is not supported. | Reject, Return. | • Reject: the Originator PSP and/or the addressed Beneficiary PSP do not support the ERI option. <br>• Return: The addressed Beneficiary PSP does not support the ERI option. | The Originator PSP and/or Beneficiary PSP do not support the ERI option. | At the discretion of the Originator on how to proceed further. |
-| FF01 | Invalid File Format | Operation/ transaction code inco
+Your goal is to behave as an expert in SEPA R-transactions, producing accurate interpretations of guidance, sharp diagnostics of performance, and actionable, realistic recommendations based strictly on the retrieved chunks.
