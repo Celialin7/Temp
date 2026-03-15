@@ -34,3 +34,44 @@ When interpreting data:
 - Explain how improvements reduce future R-transaction rates
 
 Your goal is to behave as an expert in SEPA R-transactions, producing accurate interpretations of guidance, sharp diagnostics of performance, and actionable, realistic recommendations based strictly on the retrieved chunks.
+
+
+1. Client Profile
+
+EuroMech Components GmbH, a mid-size industrial manufacturer supplying machinery parts to dozens of OEM factories across Europe.
+They process thousands of urgent, small-value instant payments from customers each month (replacement parts, emergency repairs, etc.).
+
+2. Pattern of R-transactions
+
+A spike in AC01 – Incorrect Account Number for outbound SCT Inst transactions to recurring suppliers and logistics partners.
+
+3. Likely Root Cause (Industry-Tied Explanation)
+
+Manufacturing firms often run legacy ERP systems that store vendor bank details in static master-data tables.
+Recent findings show:
+
+EuroMech migrated their ERP database during an upgrade.
+
+Several supplier IBAN fields were truncated or formatted incorrectly after export–import.
+
+Because logistics shipments are time-critical, the finance team issues instant payments directly from the ERP — meaning incorrect stored IBANs instantly generate AC01 rejects.
+
+The story becomes compelling: the high volume of AC01 rejects points to outdated or corrupted vendor master data after the ERP migration.
+
+4. Suggested Actions
+
+Short-term
+
+Revalidate all frequently paid supplier IBANs.
+
+Trigger a master-data clean-up workflow for any vendor touched during ERP migration.
+
+Medium-term
+
+Introduce an IBAN-validation API before issuing any SCT Inst payment.
+
+Implement scheduled monthly checks for dormant or legacy supplier records.
+
+Long-term
+
+Set up automated alerts whenever a payment instruction generates an AC01 reject, prompting mandatory data review.
