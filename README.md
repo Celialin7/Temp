@@ -1,14 +1,17 @@
-def filter_group(g):
-    # 若有 0 和 1，则去掉最小值（0），保留所有 1
-    if g['cola'].nunique() == 2:
-        return g[g['cola'] == 1]
+def keep_latest_one(df):
+    def pick(g):
+        # Step 1: 只保留 cola=1 的
+        g1 = g[g['cola'] == 1]
 
-    # 如果所有 cola 都一样（全 1 或全 0）
-    # 多行则根据 date 保留最近一行
-    if len(g) > 1:
-        return g.sort_values('date').iloc[-1:]   # 末行 = 最大日期
+        # Step 2: 如果没有 1，则返回空（或返回最早的 0，看你需求）
+        if g1.empty:
+            return g.iloc[0:0]   # 返回空 DF，不会引发错误
 
-    # 单行直接返回
-    return g
+        # Step 3: 如果只有一行 1，直接返回
+        if len(g1) == 1:
+            return g1
 
-df_filtered = df.groupby('caseid', group_keys=False).apply(filter_group)
+        # Step 4: 超过一行 1，取最新 date
+        return g1.sort_values('date').tail(1)
+
+    return df.groupby('caseid', group_keys=False).apply(pick)
