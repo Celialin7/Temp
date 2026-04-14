@@ -1,0 +1,251 @@
+import pandas as pd
+import re
+import os
+import sys
+import configparser
+
+
+def patch_python_files_for_dc_query(project_root=None):
+    """
+    Batch-rewrite cpi*.py files:
+    1) Insert two hive set lines right after `conn, cursor = db_util.db_connect()` (insert once only)
+    2) Replace `<df_var> = pd.read_sql(<sql_expr>,conn)` with `<df_var> = dc.query(<sql_expr>)`
+       - Keep the left-hand dataframe variable name (e.g. df / df_all / df_pop / df1 ...)
+    """
+    if project_root is None:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.abspath(os.path.join(base_dir, ".."))
+
+    set_line_1 = 'dc.query("set hive.strict.checks.no.partition.filter=false")'
+    set_line_2 = 'dc.query("set hive.mapred.mode=nonstrict")'
+
+    patched_files = 0
+    updated_connect_blocks = 0
+    updated_read_sql_lines = 0
+
+    for root, _, files in os.walk(project_root):
+        for name in files:
+            if not (name.startswith("cpi") and name.endswith(".py")):
+                continue
+
+            path = os.path.join(root, name)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    original = f.read()
+            except Exception:
+                # Skip unreadable files to avoid breaking the batch process
+                continue
+
+            lines = original.splitlines()
+            new_lines = []
+            file_changed = False
+
+            for line in lines:
+                # Rule 1: insert two set lines after db_connect() (preserve indentation)
+                m_conn = re.match(r"^([ \t]*)conn, cursor = db_util\.db_connect\(\)[ \t]*$", line)
+                if m_conn:
+                    indent = m_conn.group(1)
+                    new_lines.append(line)
+
+                    next1 = indent + set_line_1
+                    next2 = indent + set_line_2
+
+                    # Idempotent: avoid duplicate inserts
+                    if next1 not in lines and next2 not in lines:
+                        new_lines.append(next1)
+                        new_lines.append(next2)
+                        file_changed = True
+                        updated_connect_blocks += 1
+                    continue
+
+                # Rule 2: <var> = pd.read_sql(<sql_expr>,conn) -> <var> = dc.query(<sql_expr>)
+                m_sql = re.match(
+                    r"^([ \t]*)([A-Za-z_]\w*)\s*=\s*pd\.read_sql\(\s*(.*?)\s*,\s*conn\s*\)[ \t]*$",
+                    line,
+                )
+                if m_sql:
+                    indent, df_var, sql_expr = m_sql.groups()
+                    replaced = f"{indent}{df_var} = dc.query({sql_expr})"
+                    new_lines.append(replaced)
+                    if replaced != line:
+                        file_changed = True
+                        updated_read_sql_lines += 1
+                    continue
+
+                new_lines.append(line)
+
+            if file_changed:
+                patched_files += 1
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(new_lines) + ("\n" if original.endswith("\n") else ""))
+
+    print(
+        f"🛠️ [Auto-PyPatch] files={patched_files}, "
+        f"db_connect_blocks={updated_connect_blocks}, read_sql_lines={updated_read_sql_lines}"
+    )
+    sys.stdout.flush()
+
+def patch_pandas_read_sql(rewrite_python_files=False):
+    """
+    Monkey patches pd.read_sql.
+    Reads configuration from ../config/cpi_config.txt to apply:
+    1. 'auto_closed' cleanup.
+    2. LOB condition injection.
+    3. (Removed) date partition injection.
+    """
+    if rewrite_python_files:
+        patch_python_files_for_dc_query()
+
+
+    # --- 1. SETUP & CONFIGURATION ---
+    # Resolve config file path dynamically
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(base_dir, '..', 'config', 'cpi_config.txt')
+
+    print(f"⚙️  Initializing SQL Patch from: {config_path}")
+
+    # Read config file
+    # Key fix: interpolation=None allows values containing % (e.g. URL encoding)
+    try:
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(config_path)
+        
+        LOB_CONDITION = config.get('sql_patch', 'lob_condition')
+        
+        print(f"   - LOB Condition:   [{LOB_CONDITION}]")
+        
+    except Exception as e:
+        print(f"❌ Error reading cpi_config.txt: {e}")
+        return
+
+    # --- 2. PREVENT DOUBLE PATCHING ---
+    if hasattr(pd, '_original_read_sql'):
+        print("ℹ️ pd.read_sql is already patched. Skipping re-patch.")
+        return
+
+    # Save original function
+    pd._original_read_sql = pd.read_sql
+
+    # --- 3. DEFINE THE WRAPPER LOGIC ---
+    def auto_partition_read_sql(sql, con, **kwargs):
+        modified_sql = sql
+
+        # A. REMOVE 'auto_closed' LOGIC
+        join_pattern = r"left\s+join\s+\(select\s+\*\s+from\s+table\s+c\)\s+auto_closed\s+on\s+c\.key\s*=\s*auto_closed\.key"
+        modified_sql = re.sub(join_pattern, "", modified_sql, flags=re.IGNORECASE | re.DOTALL)
+        
+        modified_sql = re.sub(r",\s*auto_closed\.\w+", "", modified_sql, flags=re.IGNORECASE)
+        modified_sql = re.sub(r"auto_closed\.\w+\s*,", "", modified_sql, flags=re.IGNORECASE)
+        modified_sql = re.sub(r"and\s+auto_closed\.case\s+is\s+null", "", modified_sql, flags=re.IGNORECASE)
+
+        # B. INJECT LOB CONDITION
+        if re.search(r"\bwhere\b", modified_sql, re.IGNORECASE):
+            modified_sql = re.sub(r"\bwhere\b", f"WHERE {LOB_CONDITION} AND", modified_sql, count=1, flags=re.IGNORECASE)
+        else:
+            modified_sql += f" WHERE {LOB_CONDITION}"
+        # Diagnostic: if SQL has no placeholders but params is non-empty, drop params
+        has_placeholder = bool(re.search(r"\?|:\w+", modified_sql))
+        params_value = kwargs.get("params")
+        params_non_empty = (
+            params_value is not None
+            and (isinstance(params_value, (list, tuple, dict)) and len(params_value) > 0)
+        )
+        if not has_placeholder and params_non_empty:
+            kwargs = {k: v for k, v in kwargs.items() if k != "params"}
+
+        # Compatibility branch for connections without .cursor (e.g. HadoopLegacyInterface)
+        # Such connections should use .query(sql) instead of pandas DB-API cursor flow.
+        if hasattr(con, "query") and not hasattr(con, "cursor"):
+            result = con.query(modified_sql)
+            if isinstance(result, pd.DataFrame):
+                return result
+            return pd.DataFrame(result)
+
+        # Standard DB-API connections: use pandas original read_sql
+        try:
+            result = pd._original_read_sql(modified_sql, con, **kwargs)
+            return result
+        except Exception as e:
+            import traceback
+            print(f"❌ [Auto-SQL] execution failed; type={type(e).__name__}, repr={repr(e)}")
+            print(f"   first 500 chars of modified_sql: {modified_sql[:500]!r}")
+            traceback.print_exc()
+            sys.stdout.flush()
+            raise
+
+    # --- 4. APPLY THE PATCH ---
+    pd.read_sql = auto_partition_read_sql
+
+    # This should print immediately after patch is applied (flush avoids notebook buffering)
+    print("🚀 Success: pd.read_sql has been patched using settings from cpi_config.txt.")
+    sys.stdout.flush()
+
+
+# ---------------------------------------------------------------------------
+# dc.query patch: in .py files use `from utilities.common_util import dc` then `dc.query(sql)`
+# ---------------------------------------------------------------------------
+def _get_dc():
+    try:
+        from utilities import db_util
+        dc, _ = db_util.db_connect()
+        return dc
+    except Exception:
+        return None
+
+
+def patch_dc_query(dc=None):
+    """
+    Patch dc.query(sql): rewrite SQL first, then execute.
+    If dc is provided, patch that instance; otherwise use db_util.db_connect() inside common_util.
+    All .py files must use the same dc instance: `from utilities.common_util import dc` then `dc.query(sql)`.
+    """
+    if dc is None:
+        dc = _get_dc()
+    if dc is None:
+        print("❌ patch_dc_query: unable to get dc (db_util.db_connect failed or dc not provided)")
+        return
+
+    print("⚙️ [dc.query] Initializing SQL Patch...")
+    print(f"   patched dc id: {id(dc)}")
+    sys.stdout.flush()
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(base_dir, "..", "config", "cpi_config.txt")
+    try:
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(config_path)
+        LOB_CONDITION = config.get("sql_patch", "lob_condition")
+        print(f"   - LOB Condition:   [{LOB_CONDITION}]")
+    except Exception as e:
+        print(f"❌ Error reading cpi_config.txt: {e}")
+        return
+
+    if hasattr(dc, "_original_query"):
+        print("ℹ️ dc.query is already patched. Skipping re-patch.")
+        return
+
+    dc._original_query = dc.query
+    # Important: keep one-argument signature `def auto_partition_read_sql(sql)`.
+    # `dc.query = auto_partition_read_sql` assigns a function object (not a call).
+    # Later `dc.query(sql)` effectively calls `auto_partition_read_sql(sql)` with one argument.
+    # If written as `(self, sql)`, arguments will mismatch and fail.
+    def auto_partition_read_sql(sql):
+        modified_sql = sql
+
+        # A. Remove auto_closed related fragments
+        join_pattern = r"left\s+join\s+\(select\s+\*\s+from\s+table\s+c\)\s+auto_closed\s+on\s+c\.key\s*=\s*auto_closed\.key"
+        modified_sql = re.sub(join_pattern, "", modified_sql, flags=re.IGNORECASE | re.DOTALL)
+        modified_sql = re.sub(r",\s*auto_closed\.\w+", "", modified_sql, flags=re.IGNORECASE)
+        modified_sql = re.sub(r"auto_closed\.\w+\s*,", "", modified_sql, flags=re.IGNORECASE)
+        modified_sql = re.sub(r"and\s+auto_closed\.case\s+is\s+null", "", modified_sql, flags=re.IGNORECASE)
+
+        # B. Inject LOB condition
+        if re.search(r"\bwhere\b", modified_sql, re.IGNORECASE):
+            modified_sql = re.sub(r"\bwhere\b", "WHERE %s AND" % LOB_CONDITION, modified_sql, count=1, flags=re.IGNORECASE)
+        else:
+            modified_sql += " WHERE %s" % LOB_CONDITION
+        return dc._original_query(modified_sql)
+
+    dc.query = auto_partition_read_sql
+    print("🚀 Success: dc.query has been patched. Usage: from utilities.common_util import dc; dc.query(sql)")
+    sys.stdout.flush()
