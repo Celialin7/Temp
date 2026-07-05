@@ -2,10 +2,9 @@
 Compliance discussion-point evaluator for a single call transcript vs one standard script.
 
 Pipeline: compress transcript -> overlapping dialogue chunks -> embedding retrieval -> GPT evaluation.
-Replace call_text_embedding_3_small() and call_gpt5nano() at the bottom before running.
+Edit the User settings section below before running.
 """
 
-import argparse
 import json
 import re
 from typing import List, Tuple
@@ -14,12 +13,27 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 
-# --- Config ---
+# --- User settings (edit before running) ---
+CALL_CSV_PATH = "path/to/your/transcript.csv"
+SCRIPT_XLSX_PATH = "path/to/your/script.xlsx"
+OUTPUT_CSV_PATH = "path/to/save/result.csv"
+
+# Optional tuning
 CHUNK_SIZE = 6
 CHUNK_OVERLAP = 2
 TOP_K = 6
 SPEAKER_COL = "Speaker Roles"
 TEXT_COL = "Transcription"
+
+
+def call_text_embedding_3_small(text: str) -> dict:
+    """Return OpenAI-style response: {"data": [{"embedding": [...]}]}"""
+    raise NotImplementedError("Wire up your embedding API call here")
+
+
+def call_gpt5nano(prompt: str) -> dict:
+    """Return OpenAI-style chat response with choices[0].message.content as JSON string."""
+    raise NotImplementedError("Wire up your GPT API call here")
 
 
 def compress_transcript(df: pd.DataFrame) -> List[str]:
@@ -178,17 +192,9 @@ Return JSON example:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Evaluate compliance discussion-point coverage for one call transcript."
-    )
-    parser.add_argument("--call-csv", required=True, help="Path to call transcript CSV")
-    parser.add_argument("--script-xlsx", required=True, help="Path to standard script XLSX")
-    parser.add_argument("--output-csv", required=True, help="Path to write results CSV")
-    args = parser.parse_args()
-
     print("Loading inputs...")
-    call_df = pd.read_csv(args.call_csv)
-    script_df = pd.read_excel(args.script_xlsx)
+    call_df = pd.read_csv(CALL_CSV_PATH)
+    script_df = pd.read_excel(SCRIPT_XLSX_PATH)
 
     for col in ("Required_Discussion_Point", "Standard_Script"):
         if col not in script_df.columns:
@@ -230,21 +236,8 @@ def main() -> None:
     print("\nResults:")
     print(output_df.to_string(index=False))
 
-    output_df.to_csv(args.output_csv, index=False, encoding="utf-8-sig")
-    print(f"\nSaved results to {args.output_csv}")
-
-
-# --- API helpers (replace with your platform calls) ---
-
-
-def call_text_embedding_3_small(text: str) -> dict:
-    """Return OpenAI-style response: {"data": [{"embedding": [...]}]}"""
-    raise NotImplementedError("Wire up your embedding API call here")
-
-
-def call_gpt5nano(prompt: str) -> dict:
-    """Return OpenAI-style chat response with choices[0].message.content as JSON string."""
-    raise NotImplementedError("Wire up your GPT API call here")
+    output_df.to_csv(OUTPUT_CSV_PATH, index=False, encoding="utf-8-sig")
+    print(f"\nSaved results to {OUTPUT_CSV_PATH}")
 
 
 if __name__ == "__main__":
